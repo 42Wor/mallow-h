@@ -1,77 +1,3 @@
-# Mellow CLI - AI Agent Instructions
-
-You are an AI coding assistant. Whenever I ask you to modify, create, or delete code, DO NOT output the entire file. To save tokens and ensure exact modifications, you MUST output your changes strictly in the following format. I will parse your output using the `mellow` CLI tool.
-
-## Format Rules
-
-
-## Important Constraints:
-1. The [SEARCH] block must match the existing code *exactly*, including indentation and spacing.
-2. Include enough context in the [SEARCH] block so it is unique within the file.
-3. Do not use markdown code blocks ("```") around the format. Just output the raw text.
-4. You can output multiple blocks for multiple files or multiple changes in the same file.
-
-## Project Directory Tree
-```text
-├── .gitignore
-├── go.mod
-├── hello.txt
-├── main.go
-└── src
-    └── mellow.go
-```
-
-
-## Project Files Source Code
-
-
-====================
-FILE PATH: .gitignore
-====================
-
-
-# Mellow CLI
-container.txt
-metadata.txt
-mellow_prompt.md
-.mellow/
-.env
-mellow.toml
-
-
-====================
-FILE PATH: go.mod
-====================
-
-module local/mallow-h
-
-go 1.20
-
-====================
-FILE PATH: hello.txt
-====================
-
-Hello Mellow CLI (Updated!)
-
-
-====================
-FILE PATH: main.go
-====================
-
-package main
-
-import (
-	"local/mallow-h/src"
-)
-
-func main() {
-	src.Execute()
-}
-
-====================
-FILE PATH: src/mellow.go
-====================
-
 package src
 
 import (
@@ -286,6 +212,30 @@ You are an AI coding assistant. Whenever I ask you to modify, create, or delete 
 
 ## Format Rules
 
+### 1. To Create a New File
+[FILE] path/to/new_file.ext
+[CREATE]
+<exact lines of code to insert>
+[END]
+
+### 2. To Modify an Existing File
+[FILE] path/to/existing_file.ext
+[SEARCH]
+<exact lines of code to find - must match exactly including indentation>
+[REPLACE]
+<new lines of code to replace the searched lines>
+[END]
+
+### 3. To Delete Code Snippet
+[FILE] path/to/existing_file.ext
+[DELETE]
+<exact lines of code to remove>
+[END]
+
+### 4. To Delete Entire File
+[FILE] path/to/file.ext
+[DELETE_FILE]
+[END]
 
 ## Important Constraints:
 1. The [SEARCH] block must match the existing code *exactly*, including indentation and spacing.
@@ -322,12 +272,14 @@ You are an AI coding assistant. Whenever I ask you to modify, create, or delete 
 				return nil
 			}
 
-			name := d.Name()
-			if name == "container.txt" || name == "mellow_prompt.md" || name == "mellow-h" || name == "mellow" || name == "metadata.txt" {
+			name := strings.ToLower(d.Name())
+			ext := strings.ToLower(filepath.Ext(path))
+
+			// Strictly ignore system files and any markdown/documentation files
+			if name == "container.txt" || name == "mellow_prompt.md" || name == "metadata.txt" || name == "mellow-h" || name == "mellow" || ext == ".md" {
 				return nil
 			}
 
-			ext := filepath.Ext(path)
 			if ignoredExts[ext] {
 				return nil
 			}
@@ -369,7 +321,7 @@ func backupFile(filepathStr string) {
 	}
 
 	timestamp := time.Now().Format("20060102_150405")
-	
+
 	// Preserves original directory and file structures using real slashes
 	backupPath := filepath.Join(historyDir, timestamp, filepathStr)
 	backupDir := filepath.Dir(backupPath)
@@ -447,6 +399,14 @@ func ApplyChanges(containerPath string) {
 }
 
 func executeChange(filePath string, searchLines, replaceLines []string, mode string) bool {
+	// Prevent accidental modification/execution of critical system or markdown files
+	lowerPath := strings.ToLower(filepath.Base(filePath))
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if lowerPath == "mellow_prompt.md" || lowerPath == "container.txt" || lowerPath == "metadata.txt" || lowerPath == "mellow" || lowerPath == "mellow-h" || ext == ".md" {
+		fmt.Printf("⚠️  Blocked: Critical system or markdown file '%s' cannot be modified or executed via apply.\n", filePath)
+		return false
+	}
+
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Printf("❌ Error creating directory %s: %v\n", dir, err)
