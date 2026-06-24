@@ -3,6 +3,7 @@ package src
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,36 @@ func PrintHelp() {
 	fmt.Println("  mellow apply [file.txt]   - Apply changes from container.txt (defaults to container.txt)")
 }
 
+// isCriticalFile checks if a file is a critical system config file or documentation.
+func isCriticalFile(path string) bool {
+	name := strings.ToLower(filepath.Base(path))
+	ext := strings.ToLower(filepath.Ext(path))
+
+	criticalFiles := map[string]bool{
+		"container.txt":    true,
+		"mellow_prompt.md": true,
+		"metadata.txt":     true,
+		"mellow":           true,
+		"mellow-h":         true,
+	}
+
+	return criticalFiles[name] || ext == ".md"
+}
+
+// logError prints the error to stdout and appends the trace to metadata.txt
+func logError(message string) {
+	fmt.Println(message)
+
+	f, err := os.OpenFile("metadata.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	_, _ = f.WriteString(fmt.Sprintf("[%s] ERROR: %s\n", timestamp, message))
+}
+
 func isIgnored(path string) bool {
 	parts := strings.Split(path, string(filepath.Separator))
 	for _, part := range parts {
@@ -102,7 +133,7 @@ func buildTree(dir string, indent string, builder *strings.Builder) {
 	var validEntries []os.DirEntry
 	for _, entry := range entries {
 		name := entry.Name()
-		if !ignoredDirs[name] && name != "container.txt" && name != "mellow_prompt.md" && name != "mellow-h" && name != "mellow" && name != "metadata.txt" {
+		if !ignoredDirs[name] && !isCriticalFile(name) {
 			validEntries = append(validEntries, entry)
 		}
 	}
@@ -206,45 +237,20 @@ func InitMellow(scanCodebase bool) {
 		}
 	}
 
-	promptContent := `# Mellow CLI - AI Agent Instructions
+	// 1. Open the file pointer
 
-You are an AI coding assistant. Whenever I ask you to modify, create, or delete code, DO NOT output the entire file. To save tokens and ensure exact modifications, you MUST output your changes strictly in the following format. I will parse your output using the ` + "`mellow`" + ` CLI tool.
-
-## Format Rules
-
-### 1. To Create a New File
-[FILE] path/to/new_file.ext
-[CREATE]
-<exact lines of code to insert>
-[END]
-
-### 2. To Modify an Existing File
-[FILE] path/to/existing_file.ext
-[SEARCH]
-<exact lines of code to find - must match exactly including indentation>
-[REPLACE]
-<new lines of code to replace the searched lines>
-[END]
-
-### 3. To Delete Code Snippet
-[FILE] path/to/existing_file.ext
-[DELETE]
-<exact lines of code to remove>
-[END]
-
-### 4. To Delete Entire File
-[FILE] path/to/file.ext
-[DELETE_FILE]
-[END]
-
-## Important Constraints:
-1. The [SEARCH] block must match the existing code *exactly*, including indentation and spacing.
-2. Include enough context in the [SEARCH] block so it is unique within the file.
-3. Do not use markdown code blocks ("` + "```" + `") around the format. Just output the raw text.
-4. You can output multiple blocks for multiple files or multiple changes in the same file.`
+	file, err := os.Open("src/promptContent.txt")
+	if err != nil {
+		log.Fatalf("Failed to open file: %s", err)
+	}
+	defer file.Close() // Always close files you Open!
 
 	var builder strings.Builder
-	builder.WriteString(promptContent)
+	// 2. Stream the file content directly into the builder
+	_, err = io.Copy(&builder, file)
+	if err != nil {
+		log.Fatalf("Failed to copy content: %s", err)
+	}
 
 	if scanCodebase {
 		fmt.Println("🔍 Scanning project codebase directory tree...")
@@ -272,14 +278,11 @@ You are an AI coding assistant. Whenever I ask you to modify, create, or delete 
 				return nil
 			}
 
-			name := strings.ToLower(d.Name())
-			ext := strings.ToLower(filepath.Ext(path))
-
-			// Strictly ignore system files and any markdown/documentation files
-			if name == "container.txt" || name == "mellow_prompt.md" || name == "metadata.txt" || name == "mellow-h" || name == "mellow" || ext == ".md" {
+			if isCriticalFile(path) {
 				return nil
 			}
 
+			ext := strings.ToLower(filepath.Ext(path))
 			if ignoredExts[ext] {
 				return nil
 			}
@@ -346,7 +349,7 @@ func backupFile(filepathStr string) {
 func ApplyChanges(containerPath string) {
 	content, err := os.ReadFile(containerPath)
 	if err != nil {
-		fmt.Printf("❌ Error: %s not found.\n", containerPath)
+		logError(fmt.Sprintf("❌ Error: %s not found.", containerPath))
 		return
 	}
 
@@ -400,16 +403,14 @@ func ApplyChanges(containerPath string) {
 
 func executeChange(filePath string, searchLines, replaceLines []string, mode string) bool {
 	// Prevent accidental modification/execution of critical system or markdown files
-	lowerPath := strings.ToLower(filepath.Base(filePath))
-	ext := strings.ToLower(filepath.Ext(filePath))
-	if lowerPath == "mellow_prompt.md" || lowerPath == "container.txt" || lowerPath == "metadata.txt" || lowerPath == "mellow" || lowerPath == "mellow-h" || ext == ".md" {
-		fmt.Printf("⚠️  Blocked: Critical system or markdown file '%s' cannot be modified or executed via apply.\n", filePath)
+	if isCriticalFile(filePath) {
+		logError(fmt.Sprintf("⚠️  Blocked: Critical system or markdown file '%s' cannot be modified or executed via apply.", filePath))
 		return false
 	}
 
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		fmt.Printf("❌ Error creating directory %s: %v\n", dir, err)
+		logError(fmt.Sprintf("❌ Error creating directory %s: %v", dir, err))
 		return false
 	}
 
@@ -418,7 +419,7 @@ func executeChange(filePath string, searchLines, replaceLines []string, mode str
 		replaceStr := strings.Join(replaceLines, "\n")
 		err := os.WriteFile(filePath, []byte(replaceStr), 0644)
 		if err != nil {
-			fmt.Printf("❌ Error creating file %s: %v\n", filePath, err)
+			logError(fmt.Sprintf("❌ Error creating file %s: %v", filePath, err))
 			return false
 		}
 		fmt.Printf("✔️  Created file %s\n", filePath)
@@ -427,13 +428,13 @@ func executeChange(filePath string, searchLines, replaceLines []string, mode str
 
 	if mode == "DELETE_FILE" {
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			fmt.Printf("❌ Error: File not found -> %s\n", filePath)
+			logError(fmt.Sprintf("❌ Error: File not found -> %s", filePath))
 			return false
 		}
 		backupFile(filePath)
 		err := os.Remove(filePath)
 		if err != nil {
-			fmt.Printf("❌ Error deleting file %s: %v\n", filePath, err)
+			logError(fmt.Sprintf("❌ Error deleting file %s: %v", filePath, err))
 			return false
 		}
 		fmt.Printf("✔️  Deleted file %s\n", filePath)
@@ -441,7 +442,7 @@ func executeChange(filePath string, searchLines, replaceLines []string, mode str
 	}
 
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		fmt.Printf("❌ Error: File not found -> %s\n", filePath)
+		logError(fmt.Sprintf("❌ Error: File not found -> %s", filePath))
 		return false
 	}
 
@@ -465,7 +466,7 @@ func executeChange(filePath string, searchLines, replaceLines []string, mode str
 		newContent := strings.Replace(content, searchStr, replaceStr, 1)
 		err := os.WriteFile(filePath, []byte(newContent), 0644)
 		if err != nil {
-			fmt.Printf("❌ Error writing file %s: %v\n", filePath, err)
+			logError(fmt.Sprintf("❌ Error writing file %s: %v", filePath, err))
 			return false
 		}
 
@@ -477,6 +478,6 @@ func executeChange(filePath string, searchLines, replaceLines []string, mode str
 		return true
 	}
 
-	fmt.Printf("❌ Error: Could not find exact [SEARCH] string in %s\n", filePath)
+	logError(fmt.Sprintf("❌ Error: Could not find exact [SEARCH] string in %s", filePath))
 	return false
 }
