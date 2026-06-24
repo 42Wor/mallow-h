@@ -38,8 +38,8 @@ func main() {
 func printHelp() {
 	fmt.Println("🚀 Mellow CLI - LLM Code Harness")
 	fmt.Println("Usage:")
-	fmt.Println("  mellow init               - Initialize the .mellow history folder")
-	fmt.Println("  mellow apply [file.txt]   - Apply changes from container.txt")
+	fmt.Println("  mellow init               - Initialize the .mellow history folder, container.txt, and mellow_prompt.md")
+	fmt.Println("  mellow apply [file.txt]   - Apply changes from container.txt (defaults to container.txt)")
 }
 
 func initMellow() {
@@ -48,7 +48,60 @@ func initMellow() {
 		fmt.Printf("❌ Failed to create %s: %v\n", historyDir, err)
 		return
 	}
+
+	// Create empty container.txt if it doesn't exist
+	if _, err := os.Stat("container.txt"); os.IsNotExist(err) {
+		err = os.WriteFile("container.txt", []byte(""), 0644)
+		if err != nil {
+			fmt.Printf("❌ Failed to create container.txt: %v\n", err)
+			return
+		}
+	}
+
+	// Create the AI prompt instructions file
+	promptContent := `# Mellow CLI - AI Agent Instructions
+
+You are an AI coding assistant. Whenever I ask you to modify, create, or delete code, DO NOT output the entire file. To save tokens and ensure exact modifications, you MUST output your changes strictly in the following format. I will parse your output using the ` + "`mellow`" + ` CLI tool.
+
+## Format Rules
+
+### 1. To Create a New File
+[FILE] path/to/new_file.ext
+[CREATE]
+<exact lines of code to insert>
+[END]
+
+### 2. To Modify an Existing File
+[FILE] path/to/existing_file.ext
+[SEARCH]
+<exact lines of code to find - must match exactly including indentation>
+[REPLACE]
+<new lines of code to replace the searched lines>
+[END]
+
+### 3. To Delete Code
+[FILE] path/to/existing_file.ext
+[DELETE]
+<exact lines of code to remove>
+[END]
+
+## Important Constraints:
+1. The [SEARCH] block must match the existing code *exactly*, including indentation and spacing.
+2. Include enough context in the [SEARCH] block so it is unique within the file.
+3. Do not use markdown code blocks ("` + "```" + `") around the format. Just output the raw text.
+4. You can output multiple blocks for multiple files or multiple changes in the same file.`
+
+	if _, err := os.Stat("mellow_prompt.md"); os.IsNotExist(err) {
+		err = os.WriteFile("mellow_prompt.md", []byte(promptContent), 0644)
+		if err != nil {
+			fmt.Printf("❌ Failed to create mellow_prompt.md: %v\n", err)
+			return
+		}
+	}
+
 	fmt.Println("✅ Initialized .mellow history folder.")
+	fmt.Println("✅ Created container.txt")
+	fmt.Println("✅ Created mellow_prompt.md (Feed this file to your AI agent!)")
 }
 
 func backupFile(filepathStr string) {
@@ -60,7 +113,7 @@ func backupFile(filepathStr string) {
 	backupName := fmt.Sprintf("%s_%s", timestamp, filepath.Base(filepathStr))
 	backupPath := filepath.Join(historyDir, backupName)
 
-	os.MkdirAll(historyDir, 0755)
+	_ = os.MkdirAll(historyDir, 0755)
 
 	source, err := os.Open(filepathStr)
 	if err != nil {
@@ -74,7 +127,7 @@ func backupFile(filepathStr string) {
 	}
 	defer destination.Close()
 
-	io.Copy(destination, source)
+	_, _ = io.Copy(destination, source)
 }
 
 func applyChanges(containerPath string) {
@@ -92,6 +145,9 @@ func applyChanges(containerPath string) {
 	changesApplied := 0
 
 	for _, line := range lines {
+		// Clean up any carriage return chars from Windows formatting
+		line = strings.TrimSuffix(line, "\r")
+
 		if strings.HasPrefix(line, "[FILE]") {
 			currentFile = strings.TrimSpace(strings.TrimPrefix(line, "[FILE]"))
 		} else if strings.HasPrefix(line, "[SEARCH]") {
@@ -174,7 +230,11 @@ func executeChange(filePath string, searchLines, replaceLines []string, mode str
 
 	if strings.Contains(content, searchStr) {
 		newContent := strings.Replace(content, searchStr, replaceStr, 1)
-		os.WriteFile(filePath, []byte(newContent), 0644)
+		err := os.WriteFile(filePath, []byte(newContent), 0644)
+		if err != nil {
+			fmt.Printf("❌ Error writing file %s: %v\n", filePath, err)
+			return false
+		}
 
 		action := "Replaced"
 		if mode == "DELETE" {
