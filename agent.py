@@ -192,11 +192,10 @@ class Agent:
                     full_content += delta.content
                     current_sentence += delta.content
                     
-                    # Split by common sentence terminators
-                    parts = re.split(r'([.!?:;\n]+)', current_sentence)
+                    # Split by punctuation followed by whitespace, or newlines
+                    parts = re.split(r'([.!?:;]+\s+|\n+)', current_sentence)
                     if len(parts) > 2:
                         # Reconstruct the completed sentences
-                        # parts is like ["Hello", "!", " How are you", "?", ""]
                         complete_sentences = ""
                         for i in range(0, len(parts) - 1, 2):
                             complete_sentences += parts[i] + parts[i+1]

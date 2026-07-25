@@ -255,6 +255,9 @@
         
         let nextStartTime = 0; 
         
+        let activeSources = [];
+        let currentAssistantMessageDiv = null;
+        
         ws.onopen = () => { statusEl.innerText = "Idle"; };
         ws.onclose = () => { statusEl.innerText = "Disconnected"; };
         
@@ -280,12 +283,13 @@
                     }
                     source.start(nextStartTime);
                     nextStartTime += buffer.duration;
+                    activeSources.push(source);
                     
                     drawWaveform();
                     
                     source.onended = () => {
-                        // Only stop animation if we're done playing the entire queue
-                        if (audioContext.currentTime >= nextStartTime - 0.1) {
+                        activeSources = activeSources.filter(s => s !== source);
+                        if (activeSources.length === 0) {
                             cancelAnimationFrame(animationId);
                             clearCanvas();
                         }
@@ -303,11 +307,23 @@
                     if (data.message === 'Recording...') {
                         statusEl.classList.add('status-recording');
                         nextStartTime = 0; // Reset queue on new recording
+                        currentAssistantMessageDiv = null;
                     } else {
                         statusEl.classList.remove('status-recording');
                     }
                 } else if (data.type === 'transcript') {
-                    appendMessage(data.role, data.text);
+                    if (data.role === 'assistant') {
+                        if (!currentAssistantMessageDiv) {
+                            currentAssistantMessageDiv = document.createElement('div');
+                            currentAssistantMessageDiv.className = `message assistant`;
+                            chat.appendChild(currentAssistantMessageDiv);
+                        }
+                        currentAssistantMessageDiv.innerHTML = data.text.replace(/\n/g, '<br>');
+                        chat.scrollTop = chat.scrollHeight;
+                    } else {
+                        appendMessage(data.role, data.text);
+                        currentAssistantMessageDiv = null;
+                    }
                 } else if (data.type === 'tool_log') {
                     appendLog(data.message);
                 } else if (data.type === 'log') {
@@ -367,12 +383,11 @@
         }
         clearCanvas();
 
-        async function startRecording() {
-            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-            if (audioContext.state === 'suspended') await audioContext.resume();
-            
-            try {
+        async function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
                 const source = audioContext.createMediaStreamSource(mediaStream);
                 
                 analyser = audioContext.createAnalyser();
@@ -382,7 +397,6 @@
                 
                 processor = audioContext.createScriptProcessor(4096, 1, 1);
                 processor.onaudioprocess = (e) => {
-                    // MUST fill outputBuffer in Firefox, otherwise it suspends the AudioContext/Processor!
                     const outputData = e.outputBuffer.getChannelData(0);
                     for (let i = 0; i < outputData.length; i++) {
                         outputData[i] = 0;
@@ -400,11 +414,24 @@
                 
                 analyser.connect(processor);
                 processor.connect(audioContext.destination);
-                
+            }
+            if (audioContext.state === 'suspended') await audioContext.resume();
+        }
+
+        async function startRecording() {
+            activeSources.forEach(s => {
+                try { s.stop(); } catch(e) {}
+            });
+            activeSources = [];
+            nextStartTime = 0;
+            currentAssistantMessageDiv = null;
+
+            try {
+                await initAudio();
                 isRecording = true;
                 pttBtn.classList.add('recording');
                 pttBtn.innerText = "Listening...";
-                statusEl.innerText = "Recording";
+                statusEl.innerText = "Recording...";
                 drawWaveform();
             } catch (err) {
                 console.error(err);
@@ -421,14 +448,11 @@
             cancelAnimationFrame(animationId);
             clearCanvas();
             
-            if (processor) { processor.disconnect(); processor = null; }
-            if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
-            
             ws.send(JSON.stringify({ action: "process" }));
         }
 
         pttBtn.addEventListener('mousedown', startRecording);
-        window.addEventListener('mouseup', stopRecording); // Capture release anywhere
+        window.addEventListener('mouseup', stopRecording);
         
         pttBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
         window.addEventListener('touchend', stopRecording);
