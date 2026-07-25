@@ -3,8 +3,15 @@ import json
 import subprocess
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+import re
 
 load_dotenv()
+
+DEFAULT_IGNORE_DIRS = {
+    "venv", ".venv", "env", "node_modules", 
+    "__pycache__", ".git", ".idea", ".vscode"
+}
+DEFAULT_IGNORE_FILES = {".env", ".DS_Store", "pyc"}
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
@@ -13,11 +20,22 @@ client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
 )
 
-SYSTEM_PROMPT = """You are a highly capable voice-to-voice AI assistant and developer.
-You have access to tools that allow you to read/write files, run terminal commands, spawn sub-agents, and restart yourself.
-Because you are communicating via voice, keep your spoken responses concise and natural.
-You can execute code and test it before returning a final verbal response. 
-Use your tools generously to fulfill user requests!"""
+SYSTEM_PROMPT = """
+You are an expert AI software agent equipped with workspace manipulation tools.
+
+### Speech-to-Text (STT) Normalization Rules:
+1. Speech recognition may mishear code terms and filenames:
+   - "agent dot p y", "agent pie", "agent p y" -> `agent.py`
+   - "app dot p y", "app pie" -> `app.py`
+   - "requirements dot t x t" -> `requirements.txt`
+   - "start dot s h" -> `start.sh`
+2. If a user asks to read, edit, or inspect a file and the filename sounds misspelled or unclear, DO NOT guess or fail. Use `list_directory_tree` or `fuzzy_find_file` first to locate the exact path in the workspace.
+
+### Workspace Safety & Ignore Rules:
+1. NEVER search or inspect binary files, virtual environments (`venv/`, `.venv/`, `env/`), `node_modules/`, `__pycache__/`, `.git/`, or sensitive environment credential files (`.env`).
+2. Always respect default ignore patterns unless explicitly instructed otherwise by the user.
+3. Keep file search results concise and relevant.
+"""
 
 TOOLS = [
     {
@@ -87,8 +105,120 @@ TOOLS = [
                 "required": ["task"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_directory_tree",
+            "description": "Lists the directory tree structure and paths in the workspace, ignoring virtual environments and env files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "default": ".", "description": "Directory path to map."}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_codebase",
+            "description": "Searches for a specific word, function, or text inside project files while automatically ignoring venv and .env files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Word or phrase to search for inside files."}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fuzzy_find_file",
+            "description": "Locates a file when the spoken filename is uncertain or misheard by STT (e.g. 'agent p y').",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename_query": {"type": "string", "description": "Target filename or partial spoken name."}
+                },
+                "required": ["filename_query"]
+            }
+        }
     }
 ]
+
+def list_directory_tree(path=".", max_depth=3, current_depth=0):
+    if current_depth > max_depth:
+        return ""
+    
+    tree_str = ""
+    try:
+        items = sorted(os.listdir(path))
+    except Exception as e:
+        return f"Error reading directory {path}: {str(e)}\n"
+
+    for item in items:
+        if item in DEFAULT_IGNORE_DIRS or item in DEFAULT_IGNORE_FILES or item.endswith(".pyc"):
+            continue
+        
+        full_path = os.path.join(path, item)
+        indent = "  " * current_depth
+        
+        if os.path.isdir(full_path):
+            tree_str += f"{indent}📁 {item}/\n"
+            tree_str += list_directory_tree(full_path, max_depth, current_depth + 1)
+        else:
+            tree_str += f"{indent}📄 {item}\n"
+            
+    return tree_str
+
+
+def search_codebase(query, directory=".", max_results=20):
+    matches = []
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d not in DEFAULT_IGNORE_DIRS]
+
+        for file in files:
+            if file in DEFAULT_IGNORE_FILES or file.endswith((".pyc", ".png", ".jpg", ".tar", ".gz")):
+                continue
+
+            file_path = os.path.join(root, file)
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line_num, line in enumerate(f, 1):
+                        if pattern.search(line):
+                            matches.append(f"{file_path}:{line_num}: {line.strip()}")
+                            if len(matches) >= max_results:
+                                return "\n".join(matches) + f"\n\n(Truncated to top {max_results} matches)"
+            except Exception:
+                continue
+
+    return "\n".join(matches) if matches else f"No occurrences of '{query}' found."
+
+
+def fuzzy_find_file(filename_query, directory="."):
+    clean_query = filename_query.lower().replace(" dot ", ".").replace(" ", "")
+    found_files = []
+
+    for root, dirs, files in os.walk(directory):
+        dirs[:] = [d for d in dirs if d not in DEFAULT_IGNORE_DIRS]
+
+        for file in files:
+            if file in DEFAULT_IGNORE_FILES:
+                continue
+            
+            clean_file = file.lower()
+            if clean_query in clean_file or clean_file in clean_query:
+                found_files.append(os.path.join(root, file))
+
+    if not found_files:
+        return f"No files matching '{filename_query}' found."
+    return "Matching files found:\n" + "\n".join(f"- {f}" for f in found_files)
+
 
 def check_command_safety(command: str) -> bool:
     """Basic safety check for dangerous commands."""
@@ -117,7 +247,13 @@ class Agent:
         await self._log(f"Agent executing tool: {name}({args})")
         
         try:
-            if name == "read_file":
+            if name == "list_directory_tree":
+                return list_directory_tree(path=args.get("path", "."))
+            elif name == "search_codebase":
+                return search_codebase(query=args.get("query"))
+            elif name == "fuzzy_find_file":
+                return fuzzy_find_file(filename_query=args.get("filename_query"))
+            elif name == "read_file":
                 with open(args["path"], "r") as f:
                     return f.read()
             elif name == "write_file":

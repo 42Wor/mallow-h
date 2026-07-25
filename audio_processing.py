@@ -9,8 +9,8 @@ import io
 import sys
 
 # STT Model initialization
-print("Loading Whisper STT model (tiny.en) for faster loading...")
-whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+print("Loading Whisper STT model (base.en) for instant loading and good noise handling...")
+whisper_model = WhisperModel("base.en", device="cpu", compute_type="int8")
 print("Whisper model loaded.")
 
 # TTS Model initialization
