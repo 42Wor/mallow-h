@@ -49,7 +49,7 @@ def transcribe_audio(pcm_data: bytes) -> str:
 
 def synthesize_audio(text: str) -> bytes:
     """Synthesize text to a WAV audio file buffer (16kHz, mono, int16)."""
-    audio_stream = piper_voice.synthesize_stream_raw(text)
+    audio_stream = piper_voice.synthesize(text)
     
     out_buffer = io.BytesIO()
     with wave.open(out_buffer, "wb") as wav_file:
@@ -57,6 +57,6 @@ def synthesize_audio(text: str) -> bytes:
         wav_file.setsampwidth(2) # 2 bytes for int16
         wav_file.setframerate(16000)
         for chunk in audio_stream:
-            wav_file.writeframes(chunk)
+            wav_file.writeframes(chunk.audio_int16_bytes)
             
     return out_buffer.getvalue()

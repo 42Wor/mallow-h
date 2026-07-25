@@ -20,7 +20,7 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def get(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -39,16 +39,24 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             message = await websocket.receive()
             
-            if "bytes" in message:
+            if message["type"] == "websocket.disconnect":
+                print("WebSocket disconnected cleanly.")
+                break
+            
+            if message.get("bytes"):
                 # Append audio chunk to buffer
                 audio_buffer.extend(message["bytes"])
-            elif "text" in message:
+            elif message.get("text"):
                 data = json.loads(message["text"])
                 if data.get("action") == "process":
                     if len(audio_buffer) == 0:
                         await websocket.send_text(json.dumps({"type": "log", "message": "No audio received."}))
                         continue
                         
+                    # Calculate duration in seconds (16000 samples/sec, 2 bytes/sample)
+                    duration = len(audio_buffer) / 32000
+                    await websocket.send_text(json.dumps({"type": "log", "message": f"Processing {duration:.2f}s of audio."}))
+                    
                     # Process audio
                     await websocket.send_text(json.dumps({"type": "status", "message": "Transcribing..."}))
                     text = transcribe_audio(bytes(audio_buffer))
