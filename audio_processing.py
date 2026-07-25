@@ -42,6 +42,13 @@ def transcribe_audio(pcm_data: bytes) -> str:
     # Convert PCM bytes to float32 numpy array normalized between -1.0 and 1.0
     audio_np = np.frombuffer(pcm_data, dtype=np.int16).astype(np.float32) / 32768.0
     
+    max_amp = float(np.max(np.abs(audio_np))) if len(audio_np) > 0 else 0.0
+    print(f"[DEBUG] STT received {len(audio_np)} samples, max amplitude: {max_amp:.4f}")
+    
+    if max_amp < 0.01:
+        print("[DEBUG] Audio appears to be practically silent.")
+        return ""
+        
     segments, info = whisper_model.transcribe(audio_np, beam_size=5, language="en")
     
     text = " ".join([segment.text for segment in segments])

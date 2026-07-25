@@ -253,35 +253,59 @@
         let isRecording = false;
         let animationId;
         
+        let nextStartTime = 0; 
+        
         ws.onopen = () => { statusEl.innerText = "Idle"; };
         ws.onclose = () => { statusEl.innerText = "Disconnected"; };
         
         ws.onmessage = async (event) => {
             if (event.data instanceof Blob) {
-                const url = URL.createObjectURL(event.data);
-                const audio = new Audio(url);
-                
-                // Visualizer for playback
                 if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-                const source = audioContext.createMediaElementSource(audio);
-                analyser = audioContext.createAnalyser();
-                analyser.fftSize = 256;
-                dataArray = new Uint8Array(analyser.frequencyBinCount);
-                source.connect(analyser);
-                analyser.connect(audioContext.destination);
-                
-                audio.play();
-                drawWaveform();
-                
-                audio.onended = () => {
-                    URL.revokeObjectURL(url);
-                    cancelAnimationFrame(animationId);
-                    clearCanvas();
-                };
+                const arrayBuffer = await event.data.arrayBuffer();
+                audioContext.decodeAudioData(arrayBuffer, (buffer) => {
+                    const source = audioContext.createBufferSource();
+                    source.buffer = buffer;
+                    
+                    if (!analyser) {
+                        analyser = audioContext.createAnalyser();
+                        analyser.fftSize = 256;
+                        dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    }
+                    
+                    source.connect(analyser);
+                    analyser.connect(audioContext.destination);
+                    
+                    if (nextStartTime < audioContext.currentTime) {
+                        nextStartTime = audioContext.currentTime;
+                    }
+                    source.start(nextStartTime);
+                    nextStartTime += buffer.duration;
+                    
+                    drawWaveform();
+                    
+                    source.onended = () => {
+                        // Only stop animation if we're done playing the entire queue
+                        if (audioContext.currentTime >= nextStartTime - 0.1) {
+                            cancelAnimationFrame(animationId);
+                            clearCanvas();
+                        }
+                    };
+                });
             } else {
                 const data = JSON.parse(event.data);
                 if (data.type === 'status') {
                     statusEl.innerText = data.message;
+                    if (data.message.includes('processing') || data.message.includes('Transcribing')) {
+                        statusEl.classList.add('status-processing');
+                    } else {
+                        statusEl.classList.remove('status-processing');
+                    }
+                    if (data.message === 'Recording...') {
+                        statusEl.classList.add('status-recording');
+                        nextStartTime = 0; // Reset queue on new recording
+                    } else {
+                        statusEl.classList.remove('status-recording');
+                    }
                 } else if (data.type === 'transcript') {
                     appendMessage(data.role, data.text);
                 } else if (data.type === 'tool_log') {
@@ -358,7 +382,14 @@
                 
                 processor = audioContext.createScriptProcessor(4096, 1, 1);
                 processor.onaudioprocess = (e) => {
+                    // MUST fill outputBuffer in Firefox, otherwise it suspends the AudioContext/Processor!
+                    const outputData = e.outputBuffer.getChannelData(0);
+                    for (let i = 0; i < outputData.length; i++) {
+                        outputData[i] = 0;
+                    }
+
                     if (!isRecording) return;
+                    
                     const inputData = e.inputBuffer.getChannelData(0);
                     const pcm16 = new Int16Array(inputData.length);
                     for (let i = 0; i < inputData.length; i++) {

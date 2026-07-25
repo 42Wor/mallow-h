@@ -69,19 +69,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
                         
                     # Send to Agent
-                    await websocket.send_text(json.dumps({"type": "status", "message": "Agent thinking..."}))
-                    response_text = await agent.chat(text)
+                    await websocket.send_text(json.dumps({"type": "status", "message": "Agent processing..."}))
                     
-                    await websocket.send_text(json.dumps({"type": "transcript", "role": "assistant", "text": response_text}))
-                    
-                    # Synthesize Speech
-                    await websocket.send_text(json.dumps({"type": "status", "message": "Synthesizing audio..."}))
-                    audio_bytes = synthesize_audio(response_text)
-                    
-                    # Send audio to frontend
-                    await websocket.send_text(json.dumps({"type": "audio_start"}))
-                    await websocket.send_bytes(audio_bytes)
-                    await websocket.send_text(json.dumps({"type": "audio_end"}))
+                    full_response = ""
+                    async for sentence in agent.chat_stream(text):
+                        full_response += sentence + " "
+                        await websocket.send_text(json.dumps({"type": "transcript", "role": "assistant", "text": full_response.strip()}))
+                        
+                        # Synthesize and stream audio chunk immediately
+                        audio_bytes = synthesize_audio(sentence)
+                        await websocket.send_bytes(audio_bytes)
+                        
                     await websocket.send_text(json.dumps({"type": "status", "message": "Idle"}))
                     
     except WebSocketDisconnect:

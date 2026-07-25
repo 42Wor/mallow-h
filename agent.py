@@ -152,7 +152,8 @@ class Agent:
         except Exception as e:
             return f"Tool execution failed: {str(e)}"
 
-    async def chat(self, user_message: str) -> str:
+    async def chat_stream(self, user_message: str):
+        import re
         self.messages.append({"role": "user", "content": user_message})
         
         while True:
@@ -161,23 +162,93 @@ class Agent:
                 messages=self.messages,
                 tools=TOOLS,
                 tool_choice="auto",
+                stream=True
             )
             
-            message = response.choices[0].message
-            self.messages.append(message)
+            is_tool_call = False
+            tool_calls_buffer = {}
+            current_sentence = ""
+            full_content = ""
             
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    tool_result = await self._execute_tool(tool_call)
+            async for chunk in response:
+                delta = chunk.choices[0].delta
+                
+                if delta.tool_calls:
+                    is_tool_call = True
+                    for tc in delta.tool_calls:
+                        if tc.index not in tool_calls_buffer:
+                            tool_calls_buffer[tc.index] = {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {"name": tc.function.name or "", "arguments": ""}
+                            }
+                        if tc.function.name:
+                            tool_calls_buffer[tc.index]["function"]["name"] += tc.function.name
+                        if tc.function.arguments:
+                            tool_calls_buffer[tc.index]["function"]["arguments"] += tc.function.arguments
+                    continue
+                
+                if not is_tool_call and delta.content:
+                    full_content += delta.content
+                    current_sentence += delta.content
+                    
+                    # Split by common sentence terminators
+                    parts = re.split(r'([.!?:;\n]+)', current_sentence)
+                    if len(parts) > 2:
+                        # Reconstruct the completed sentences
+                        # parts is like ["Hello", "!", " How are you", "?", ""]
+                        complete_sentences = ""
+                        for i in range(0, len(parts) - 1, 2):
+                            complete_sentences += parts[i] + parts[i+1]
+                        
+                        remainder = parts[-1]
+                        
+                        clean_sentence = complete_sentences.strip()
+                        if clean_sentence:
+                            yield clean_sentence
+                            
+                        current_sentence = remainder
+            
+            if is_tool_call:
+                tool_calls_list = []
+                for idx, tc_data in tool_calls_buffer.items():
+                    tool_calls_list.append({
+                        "id": tc_data["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc_data["function"]["name"],
+                            "arguments": tc_data["function"]["arguments"]
+                        }
+                    })
+                
+                self.messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": tool_calls_list
+                })
+                
+                for tc in tool_calls_list:
+                    class FakeFunc:
+                        name = tc["function"]["name"]
+                        arguments = tc["function"]["arguments"]
+                    class FakeTC:
+                        id = tc["id"]
+                        function = FakeFunc()
+                    
+                    tool_result = await self._execute_tool(FakeTC())
                     self.messages.append({
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": tool_call.function.name,
+                        "tool_call_id": tc["id"],
+                        "name": tc["function"]["name"],
                         "content": str(tool_result)
                     })
-                # After executing tools, continue the loop to get the model's next response
+                
+                # Continue loop to send tool results to LLM
                 continue
             else:
-                # No more tool calls, return the text response
-                return message.content
+                if current_sentence.strip():
+                    yield current_sentence.strip()
+                
+                self.messages.append({"role": "assistant", "content": full_content})
+                break
 
