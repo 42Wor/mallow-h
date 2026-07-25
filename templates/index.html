@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice AI Engineer</title>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --panel-bg: rgba(30, 41, 59, 0.7);
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: rgba(255, 255, 255, 0.1);
+        }
+        
+        * { box-sizing: border-box; }
+        
+        body { 
+            font-family: 'Inter', 'Segoe UI', sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            height: 100vh;
+            background: linear-gradient(135deg, #020617 0%, var(--bg-dark) 100%);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+            background: -webkit-linear-gradient(#60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .container {
+            display: flex;
+            flex: 1;
+            gap: 20px;
+            max-height: calc(100vh - 80px);
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Left Side: Controls & Logs */
+        .sidebar {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 30px;
+            text-align: center;
+        }
+
+        canvas {
+            width: 100%;
+            height: 80px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            margin-bottom: 20px;
+        }
+
+        #ptt-btn { 
+            padding: 16px 32px; 
+            font-size: 18px; 
+            font-weight: 600;
+            border-radius: 50px; 
+            border: none; 
+            cursor: pointer; 
+            background-color: var(--accent);
+            color: white;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+        }
+        
+        #ptt-btn:hover {
+            transform: scale(1.05);
+            background-color: var(--accent-hover);
+        }
+
+        #ptt-btn.recording { 
+            background-color: var(--danger); 
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); 
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1.05); box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); }
+            50% { transform: scale(1.1); box-shadow: 0 0 30px rgba(239, 68, 68, 0.8); }
+            100% { transform: scale(1.05); box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); }
+        }
+
+        #status { 
+            margin-top: 15px;
+            font-size: 14px;
+            color: var(--text-muted); 
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 500;
+        }
+
+        .tool-logs {
+            flex: 1;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            color: #10b981;
+        }
+        
+        .tool-logs .log-entry {
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding-bottom: 8px;
+            word-break: break-all;
+        }
+
+        /* Right Side: Chat */
+        .chat-panel {
+            flex: 2;
+        }
+
+        .chat-header {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+        }
+
+        #chat { 
+            flex: 1;
+            overflow-y: auto; 
+            padding-right: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+
+        .message { 
+            padding: 12px 16px; 
+            border-radius: 12px; 
+            max-width: 85%;
+            line-height: 1.5;
+            font-size: 15px;
+            animation: fadeIn 0.3s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .user { 
+            background: linear-gradient(to right, #1e3a8a, #3b82f6);
+            align-self: flex-end; 
+            border-bottom-right-radius: 2px;
+        }
+        
+        .assistant { 
+            background: rgba(255, 255, 255, 0.05); 
+            border: 1px solid var(--border-color);
+            align-self: flex-start; 
+            border-bottom-left-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Agentic Voice Developer</h1>
+    </header>
+    
+    <div class="container">
+        <!-- Sidebar: Controls & Tool Logs -->
+        <div class="sidebar">
+            <div class="panel controls">
+                <canvas id="waveform"></canvas>
+                <button id="ptt-btn">Hold to Talk</button>
+                <div id="status">Disconnected</div>
+            </div>
+            <div class="panel" style="flex: 1;">
+                <div class="chat-header">Agent Activity & Logs</div>
+                <div id="tool-logs" class="tool-logs"></div>
+            </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="panel chat-panel">
+            <div class="chat-header">Transcript</div>
+            <div id="chat"></div>
+        </div>
+    </div>
+
+    <script>
+        const chat = document.getElementById('chat');
+        const toolLogs = document.getElementById('tool-logs');
+        const pttBtn = document.getElementById('ptt-btn');
+        const statusEl = document.getElementById('status');
+        const canvas = document.getElementById('waveform');
+        const canvasCtx = canvas.getContext('2d');
+        
+        // Resize canvas
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth - 40;
+            canvas.height = 80;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        let audioContext;
+        let processor;
+        let mediaStream;
+        let analyser;
+        let dataArray;
+        let isRecording = false;
+        let animationId;
+        
+        ws.onopen = () => { statusEl.innerText = "Idle"; };
+        ws.onclose = () => { statusEl.innerText = "Disconnected"; };
+        
+        ws.onmessage = async (event) => {
+            if (event.data instanceof Blob) {
+                const url = URL.createObjectURL(event.data);
+                const audio = new Audio(url);
+                
+                // Visualizer for playback
+                if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioContext.createMediaElementSource(audio);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+                
+                audio.play();
+                drawWaveform();
+                
+                audio.onended = () => {
+                    URL.revokeObjectURL(url);
+                    cancelAnimationFrame(animationId);
+                    clearCanvas();
+                };
+            } else {
+                const data = JSON.parse(event.data);
+                if (data.type === 'status') {
+                    statusEl.innerText = data.message;
+                } else if (data.type === 'transcript') {
+                    appendMessage(data.role, data.text);
+                } else if (data.type === 'tool_log') {
+                    appendLog(data.message);
+                } else if (data.type === 'log') {
+                    appendLog("[SYSTEM] " + data.message);
+                }
+            }
+        };
+
+        function appendMessage(role, text) {
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.innerText = text;
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function appendLog(text) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerText = text;
+            toolLogs.appendChild(div);
+            toolLogs.scrollTop = toolLogs.scrollHeight;
+        }
+
+        function drawWaveform() {
+            animationId = requestAnimationFrame(drawWaveform);
+            if (!analyser) return;
+            
+            analyser.getByteTimeDomainData(dataArray);
+            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = isRecording ? '#ef4444' : '#3b82f6';
+            canvasCtx.beginPath();
+            
+            const sliceWidth = canvas.width * 1.0 / analyser.frequencyBinCount;
+            let x = 0;
+            
+            for(let i = 0; i < analyser.frequencyBinCount; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = v * canvas.height/2;
+                if(i === 0) canvasCtx.moveTo(x, y);
+                else canvasCtx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            canvasCtx.lineTo(canvas.width, canvas.height/2);
+            canvasCtx.stroke();
+        }
+
+        function clearCanvas() {
+            canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(0, canvas.height/2);
+            canvasCtx.lineTo(canvas.width, canvas.height/2);
+            canvasCtx.strokeStyle = 'rgba(255,255,255,0.1)';
+            canvasCtx.stroke();
+        }
+        clearCanvas();
+
+        async function startRecording() {
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            if (audioContext.state === 'suspended') await audioContext.resume();
+            
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const source = audioContext.createMediaStreamSource(mediaStream);
+                
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                source.connect(analyser);
+                
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                processor.onaudioprocess = (e) => {
+                    if (!isRecording) return;
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const pcm16 = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        pcm16[i] = Math.max(-32768, Math.min(32767, Math.floor(inputData[i] * 32768)));
+                    }
+                    ws.send(pcm16.buffer);
+                };
+                
+                analyser.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                isRecording = true;
+                pttBtn.classList.add('recording');
+                pttBtn.innerText = "Listening...";
+                statusEl.innerText = "Recording";
+                drawWaveform();
+            } catch (err) {
+                console.error(err);
+                statusEl.innerText = "Mic Error";
+            }
+        }
+
+        function stopRecording() {
+            if (!isRecording) return;
+            isRecording = false;
+            pttBtn.classList.remove('recording');
+            pttBtn.innerText = "Hold to Talk";
+            
+            cancelAnimationFrame(animationId);
+            clearCanvas();
+            
+            if (processor) { processor.disconnect(); processor = null; }
+            if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+            
+            ws.send(JSON.stringify({ action: "process" }));
+        }
+
+        pttBtn.addEventListener('mousedown', startRecording);
+        window.addEventListener('mouseup', stopRecording); // Capture release anywhere
+        
+        pttBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+        window.addEventListener('touchend', stopRecording);
+    </script>
+</body>
+</html>

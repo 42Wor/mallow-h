@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+websockets
+openai
+faster-whisper
+pyttsx3
+python-dotenv
+webrtcvad
+jinja2
+python-multipart
