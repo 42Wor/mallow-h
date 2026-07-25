@@ -1,1 +1,19 @@
+# Virtual environments
+venv/
+env/
 .env
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Downloaded AI Models
+*.onnx
+*.onnx.json
+
+# IDEs and OS
+.vscode/
+.idea/
+.DS_Store
